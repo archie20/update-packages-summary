@@ -3,6 +3,9 @@
   "displayName": "Update Packages Summary",
   "description": "Analyzes lock files and displays a summary of upgraded/downgraded packages",
   "version": "1.0.0",
+  "repository": "https://github.com/archie20/update-packages-summary",
+  "publisher": "archie20",
+  "keywords": ["packages","manage updates"],
   "engines": {
     "vscode": "^1.93.0"
   },
@@ -32,14 +35,19 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.93.0",
+    "@types/glob": "^8.1.0",
     "@types/mocha": "^10.0.7",
     "@types/node": "20.x",
+    "@types/sinon": "^17.0.3",
+    "@types/vscode": "^1.93.0",
     "@typescript-eslint/eslint-plugin": "^8.3.0",
     "@typescript-eslint/parser": "^8.3.0",
-    "eslint": "^9.9.1",
-    "typescript": "^5.5.4",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.9.1",
+    "glob": "^11.0.0",
+    "mocha": "^10.7.3",
+    "sinon": "^19.0.2",
+    "typescript": "^5.5.4"
   }
 }
