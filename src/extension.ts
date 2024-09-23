@@ -77,7 +77,7 @@ async function doOperation(fileType: string) {
         //         { placeHolder: 'Select the old commit' }
         //     );
 
-        const commit1 = await vscode.window.showInputBox({ prompt: 'Enter the hash of first commit' });
+        const commit1 = await vscode.window.showInputBox({ prompt: 'Enter the hash of previous commit' });
         const commit2 = await vscode.window.showInputBox({ prompt: 'Enter the hash of new commit' });
 
         if (!commit1 || !commit2) {
@@ -116,7 +116,7 @@ async function doOperation(fileType: string) {
         }
 }
 
-function parsePackageLockDiff(diff: string): PackageChange[] {
+export function parsePackageLockDiff(diff: string): PackageChange[] {
     const changes: PackageChange[] = [];
     const lines = diff.split('\n'); //get lines from diff string
     let currentPackage = '';
@@ -151,7 +151,7 @@ function parsePackageLockDiff(diff: string): PackageChange[] {
     return changes;
 }
 
-function parseComposerLockDiff(diff: string): PackageChange[] {
+export function parseComposerLockDiff(diff: string): PackageChange[] {
 	 const changes: PackageChange[] = [];
     const lines = diff.split('\n'); //get lines from diff string
     let currentPackage = '';
@@ -223,7 +223,7 @@ function getWebviewContentNice(changes: PackageChange[]): string {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Package-lock.json Changes</title>
+        <title>Package Changes</title>
         <style>
             body { font-family: Arial, sans-serif; }
             table { border-collapse: collapse; width: 100%; }
@@ -255,7 +255,7 @@ function getWebviewContentMinimal(changes: PackageChange[]): string {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Package-lock.json Changes</title>
+        <title>Package Changes</title>
     </head>
     <body>
         <h1>Package Version Changes</h1>
