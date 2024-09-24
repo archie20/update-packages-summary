@@ -120,23 +120,23 @@ export function parsePackageLockDiff(diff: string): PackageChange[] {
     const changes: PackageChange[] = [];
     const lines = diff.split('\n'); //get lines from diff string
     let currentPackage = '';
-	const versionRegex = /"version": "([^"]+)"/;
-    const packageRegex = /"([^"]+)":/;
+	const versionRegex = /"version":\s*"([^"]+)"/; // match a string like "version": "0.1.2"
+    const packageRegex = /"([^"]+)":\s*{/; //will match a string like "package-name": {
 
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.startsWith('         "')) { //line starting with 9 spaces add " to get package name.
-			//1st group capture of characters in the double quotes which are not double quotes
+        const line = lines[i].trim();
+        if (line.match(packageRegex)) {
             const packageName = line.match(packageRegex)?.[1]; 
             if (packageName) {
                 currentPackage = packageName;
             }else{
 				continue; //just go to next loop if the package name could not be extracted
 			}
-        } else if (line.startsWith('-            "version":')) { //line starts with - and 12 spaces to version
+        } else if (line.startsWith('-') && line.includes('"version":')) { //changed(removed) line starts with -
            const oldVersion = line.match(versionRegex)?.[1];//line should start with "version" and match the numbers in the quotes
 			for (let j = i+1; j < lines.length; j++) {
-				if(lines[j]?.startsWith('+            "version":')){
+                  const newLine = lines[j].trim();
+				if(newLine.startsWith('+') && newLine.includes('"version":')) {//changed(added) line starts with +
 					const newVersion = lines[j].match(versionRegex)?.[1];
 					if (oldVersion && newVersion) {
 						changes.push({ name: currentPackage.trim(), oldVersion:oldVersion.trim(), newVersion: newVersion.trim() });
@@ -155,13 +155,13 @@ export function parseComposerLockDiff(diff: string): PackageChange[] {
 	 const changes: PackageChange[] = [];
     const lines = diff.split('\n'); //get lines from diff string
     let currentPackage = '';
-	const versionRegex = /"version": "([^"]+)"/;
+	const versionRegex = /"version":\s*"([^"]+)"/; // match a string like "version": "0.1.2"
     const packageRegex = /"name": "([^"]+)"/;
 
     for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        const line = lines[i].trim();
 	
-        if (line.startsWith('             "name":')) { //line starting with 13 spaces add " to get package name.
+        if (line.startsWith('"name":')) { //line name to get package name.
 			//1st group capture of characters in the double quotes which are not double quotes
             const packageName = line.match(packageRegex)?.[1]; 
             if (packageName) {
@@ -169,10 +169,11 @@ export function parseComposerLockDiff(diff: string): PackageChange[] {
             }else{
 				continue; //just go to next loop if the package name could not be extracted
 			}
-        } else if (line.startsWith('-            "version":')) { //line starts with - and 12 spaces to version
+        } else if (line.startsWith('-') && line.includes('"version":')) { //line starts with - and has the text version
            const oldVersion = line.match(versionRegex)?.[1];//line should start with "version" and match the numbers in the quotes
 			for (let j = i+1; j < lines.length; j++) {
-				if(lines[j]?.startsWith('+            "version":')){
+                 const newLine = lines[j].trim();
+				if(newLine.startsWith('+') && newLine.includes('"version":')){
 					const newVersion = lines[j].match(versionRegex)?.[1];
 					if (oldVersion && newVersion) {
 						changes.push({ name: currentPackage.trim(), oldVersion:oldVersion.trim(), newVersion: newVersion.trim() });
@@ -190,7 +191,7 @@ export function parseComposerLockDiff(diff: string): PackageChange[] {
 function displayPackageChanges(changes: PackageChange[], display: string = 'minimal') {
     const panel = vscode.window.createWebviewPanel(
         'packageChanges',
-        'Package-lock.json Changes',
+        'Package Changes',
         vscode.ViewColumn.One,
         {}
     );

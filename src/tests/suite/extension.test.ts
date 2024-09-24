@@ -25,7 +25,7 @@ suite('Extension Test Suite', () => {
 
     test('parsePackageLockDiff should return correct changes', () => {
         const diff = `
-         "package-name":
+         "package-name": {
 -            "version": "1.0.0"
 +            "version": "1.1.0"
         `;
@@ -72,7 +72,7 @@ suite('Webview Panel Creation Test Suite', () => {
         assert.ok(createWebviewPanelStub.calledOnce, 'createWebviewPanel was not called');
 
         const panelArgs = createWebviewPanelStub.args[0];
-        assert.strictEqual(panelArgs[1], 'Package-lock.json Changes', 'Webview title is incorrect');
+        assert.strictEqual(panelArgs[1], 'Package Changes', 'Webview title is incorrect');
         
      
         const panel = panelArgs[0];  // This is the stubbed panel object
