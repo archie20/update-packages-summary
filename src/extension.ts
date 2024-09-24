@@ -122,13 +122,17 @@ export function parsePackageLockDiff(diff: string): PackageChange[] {
     let currentPackage = '';
 	const versionRegex = /"version":\s*"([^"]+)"/; // match a string like "version": "0.1.2"
     const packageRegex = /"([^"]+)":\s*{/; //will match a string like "package-name": {
-
+    const nodeModulesPrefix = 'node_modules/';
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         if (line.match(packageRegex)) {
             const packageName = line.match(packageRegex)?.[1]; 
             if (packageName) {
-                currentPackage = packageName;
+                if(packageName.startsWith(nodeModulesPrefix)){
+                    currentPackage = packageName.slice(nodeModulesPrefix.length); //remove node_modules from name
+                }else{
+                    currentPackage = packageName;
+                }
             }else{
 				continue; //just go to next loop if the package name could not be extracted
 			}
