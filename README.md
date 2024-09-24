@@ -24,6 +24,11 @@ To use
 
 Initial release of update-packages-summary. Supports package-lock.json and composer.lock for now.
 
+### 1.1.0
+
+- Used a better logic to extract the package names and versions
+- Removed the string 'node_modules' from package name
+
 ---
 
 ## Running the Sample
