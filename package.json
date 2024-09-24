@@ -2,7 +2,7 @@
   "name": "update-packages-summary",
   "displayName": "Update Packages Summary",
   "description": "Analyzes lock files and displays a summary of upgraded/downgraded packages",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "repository": "https://github.com/archie20/update-packages-summary",
   "publisher": "archie20",
   "keywords": ["packages","manage updates"],
