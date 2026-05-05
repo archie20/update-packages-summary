@@ -1,5 +1,3 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { exec } from 'child_process';
@@ -12,143 +10,177 @@ interface PackageChange {
     oldVersion: string;
     newVersion: string;
 }
+
 const viewTypes = [
-		{
-			type: 'nice',
-			description : 'Table format with headings'
-		},
-		{
-			type: 'minimal',
-			description : 'Outputs just the package name and oldVersion -> newVersion'
-		}
-	];
+    { type: 'nice', description: 'Table format with headings' },
+    { type: 'minimal', description: 'Outputs just the package name and oldVersion -> newVersion' },
+];
 
-// This method is called when the extension is activated
-// Your extension is activated the very first time the command is executed
+const ENTER_MANUALLY_LABEL = 'Enter hash manually...';
+
 export function activate(context: vscode.ExtensionContext) {
+    console.log('update-packages-summary is now active!');
 
-	// This line of code will only be executed once when your extension is activated
-	console.log('update-packages-summary is now active!');
+    const diffPackageLock = vscode.commands.registerCommand('update-packages-summary.diffPackageLock', async () => {
+        await doOperation('package-lock.json');
+    });
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const diffPackageLock = vscode.commands.registerCommand('update-packages-summary.diffPackageLock', async () => {
-		await doOperation('package-lock.json');
-	});
+    const diffComposerLock = vscode.commands.registerCommand('update-packages-summary.diffComposerLock', async () => {
+        await doOperation('composer.lock');
+    });
 
-	const diffComposerLock = vscode.commands.registerCommand('update-packages-summary.diffComposerLock', async () => {
-		await doOperation('composer.lock');
-	});
+    const diffPubspecYaml = vscode.commands.registerCommand('update-packages-summary.diffPubspecYaml', async () => {
+        await doOperation('pubspec.yaml');
+    });
 
-	context.subscriptions.push(diffPackageLock);
-	context.subscriptions.push(diffComposerLock);
+    context.subscriptions.push(diffPackageLock, diffComposerLock, diffPubspecYaml);
+}
+
+/**
+ * Shows a QuickPick populated with the last 20 commits from git log.
+ * A "Enter hash manually..." item at the top lets the user type any hash freely.
+ * Returns the selected/typed commit hash, or undefined if the user cancelled.
+ */
+async function pickCommit(workspacePath: string, placeHolder: string): Promise<string | undefined> {
+    let commitItems: vscode.QuickPickItem[] = [];
+
+    try {
+        const { stdout } = await execAsync('git log --oneline -n 10', { cwd: workspacePath });
+        commitItems = stdout
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map(line => {
+                const spaceIdx = line.indexOf(' ');
+                const hash = line.slice(0, spaceIdx);
+                const message = line.slice(spaceIdx + 1);
+                return { label: hash, description: message };
+            });
+    } catch {
+        // git log failed (no commits yet, etc.) — fall through to manual entry
+    }
+
+    const items: vscode.QuickPickItem[] = [
+        { label: ENTER_MANUALLY_LABEL, description: 'Type any commit hash or ref' },
+        ...commitItems,
+    ];
+
+    const picked = await vscode.window.showQuickPick(items, { placeHolder });
+    if (!picked) {
+        return undefined;
+    }
+
+    if (picked.label === ENTER_MANUALLY_LABEL) {
+        return vscode.window.showInputBox({ prompt: placeHolder, placeHolder: 'e.g. a1b2c3d' });
+    }
+
+    return picked.label;
 }
 
 async function doOperation(fileType: string) {
-	  const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showErrorMessage('No active file');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showErrorMessage('No active file');
+        return;
+    }
+
+    const filePath = editor.document.uri.fsPath;
+    if (path.basename(filePath) !== fileType) {
+        vscode.window.showErrorMessage(`This command only works with ${fileType} files`);
+        return;
+    }
+
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage('File is not part of a workspace');
+        return;
+    }
+
+    const workspacePath = workspaceFolder.uri.fsPath;
+
+    const commit1 = await pickCommit(workspacePath, 'Select or enter the old (before) commit');
+    if (!commit1) {
+        vscode.window.showErrorMessage('Old commit is required');
+        return;
+    }
+
+    const commit2 = await pickCommit(workspacePath, 'Select or enter the new (after) commit');
+    if (!commit2) {
+        vscode.window.showErrorMessage('New commit is required');
+        return;
+    }
+
+    const view = await vscode.window.showQuickPick(
+        viewTypes.map(v => ({ label: v.type, description: v.description })),
+        { placeHolder: 'Select view type.' }
+    );
+
+    try {
+        const relativePath = path.relative(workspacePath, filePath);
+        const { stdout } = await execAsync(
+            `git diff ${commit1}..${commit2} -- ${relativePath}`,
+            { cwd: workspacePath }
+        );
+
+        if (!stdout) {
+            vscode.window.showInformationMessage('No differences found');
             return;
         }
 
-        const filePath = editor.document.uri.fsPath;
-        if (path.basename(filePath) !== fileType) {
-            vscode.window.showErrorMessage(`This command only works with ${fileType} files`);
-            return;
+        let packageChanges: PackageChange[] = [];
+        switch (fileType) {
+            case 'package-lock.json':
+                packageChanges = parsePackageLockDiff(stdout);
+                break;
+            case 'composer.lock':
+                packageChanges = parseComposerLockDiff(stdout);
+                break;
+            case 'pubspec.yaml':
+                packageChanges = parsePubspecYamlDiff(stdout);
+                break;
+            default:
+                throw new Error('Cannot parse the lock file type: ' + fileType);
         }
 
-        const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-        if (!workspaceFolder) {
-            vscode.window.showErrorMessage('File is not part of a workspace');
-            return;
-        }
-		//Might use quickPick later, but want to keep unrestricted
-		// // Get list of recent commits
-        //     const { stdout: commitList } = await execAsync('git log --oneline -n 5', { cwd: workspaceFolder.uri.fsPath });
-        //     const commits = commitList.split('\n').map(line => {
-        //         const [hash, ...messageParts] = line.split(' ');
-        //         return { hash, message: messageParts.join(' ') };
-        //     });
-
-        //     // Show  pick for old commit
-        //     const oldCommit = await vscode.window.showQuickPick(
-        //         commits.map(c => ({ label: c.hash, description: c.message })),
-        //         { placeHolder: 'Select the old commit' }
-        //     );
-
-        const commit1 = await vscode.window.showInputBox({ prompt: 'Enter the hash of previous commit' });
-        const commit2 = await vscode.window.showInputBox({ prompt: 'Enter the hash of new commit' });
-
-        if (!commit1 || !commit2) {
-            vscode.window.showErrorMessage('Both commits are required');
-            return;
-        }
-
-		 const view = await vscode.window.showQuickPick(
-                viewTypes.map(v => ({ label: v.type, description: v.description })),
-                { placeHolder: 'Select view type.' }
-            );
-
-        try {
-            const relativePath = path.relative(workspaceFolder.uri.fsPath, filePath);
-            const { stdout } = await execAsync(`git diff ${commit1}..${commit2} -- ${relativePath}`, { cwd: workspaceFolder.uri.fsPath });
-
-            if (!stdout) {
-                vscode.window.showInformationMessage('No differences found');
-                return;
-            }
-			let packageChanges: PackageChange[] = [];
-			switch (fileType) {
-				case 'package-lock.json':
-					packageChanges = parsePackageLockDiff(stdout);
-					break;
-				case 'composer.lock':
-					packageChanges = parseComposerLockDiff(stdout);
-					break;
-				default:
-					throw new Error("Cannot parse the lock file type: " + fileType);
-			}
-			displayPackageChanges(packageChanges, view?.label);
-            
-        } catch (error) {
-            vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        displayPackageChanges(packageChanges, view?.label);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
 }
 
 export function parsePackageLockDiff(diff: string): PackageChange[] {
     const changes: PackageChange[] = [];
-    const lines = diff.split('\n'); //get lines from diff string
+    const lines = diff.split('\n');
     let currentPackage = '';
-	const versionRegex = /"version":\s*"([^"]+)"/; // match a string like "version": "0.1.2"
-    const packageRegex = /"([^"]+)":\s*{/; //will match a string like "package-name": {
+    const versionRegex = /"version":\s*"([^"]+)"/;
+    const packageRegex = /"([^"]+)":\s*{/;
     const nodeModulesPrefix = 'node_modules/';
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
+
         if (line.match(packageRegex)) {
-            const packageName = line.match(packageRegex)?.[1]; 
+            const packageName = line.match(packageRegex)?.[1];
             if (packageName) {
-                if(packageName.startsWith(nodeModulesPrefix)){
-                    currentPackage = packageName.slice(nodeModulesPrefix.length); //remove node_modules from name
-                }else{
-                    currentPackage = packageName;
+                currentPackage = packageName.startsWith(nodeModulesPrefix)
+                    ? packageName.slice(nodeModulesPrefix.length)
+                    : packageName;
+            } else {
+                continue;
+            }
+        } else if (line.startsWith('-') && line.includes('"version":')) {
+            const oldVersion = line.match(versionRegex)?.[1];
+            for (let j = i + 1; j < lines.length; j++) {
+                const newLine = lines[j].trim();
+                if (newLine.startsWith('+') && newLine.includes('"version":')) {
+                    const newVersion = lines[j].match(versionRegex)?.[1];
+                    if (oldVersion && newVersion) {
+                        changes.push({ name: currentPackage.trim(), oldVersion: oldVersion.trim(), newVersion: newVersion.trim() });
+                    }
+                    i = j;
+                    break;
                 }
-            }else{
-				continue; //just go to next loop if the package name could not be extracted
-			}
-        } else if (line.startsWith('-') && line.includes('"version":')) { //changed(removed) line starts with -
-           const oldVersion = line.match(versionRegex)?.[1];//line should start with "version" and match the numbers in the quotes
-			for (let j = i+1; j < lines.length; j++) {
-                  const newLine = lines[j].trim();
-				if(newLine.startsWith('+') && newLine.includes('"version":')) {//changed(added) line starts with +
-					const newVersion = lines[j].match(versionRegex)?.[1];
-					if (oldVersion && newVersion) {
-						changes.push({ name: currentPackage.trim(), oldVersion:oldVersion.trim(), newVersion: newVersion.trim() });
-					}
-					i = j; //let the next line for package name search start from after the new version name line
-					break;
-				}
-			}
+            }
         }
     }
 
@@ -156,36 +188,98 @@ export function parsePackageLockDiff(diff: string): PackageChange[] {
 }
 
 export function parseComposerLockDiff(diff: string): PackageChange[] {
-	 const changes: PackageChange[] = [];
-    const lines = diff.split('\n'); //get lines from diff string
+    const changes: PackageChange[] = [];
+    const lines = diff.split('\n');
     let currentPackage = '';
-	const versionRegex = /"version":\s*"([^"]+)"/; // match a string like "version": "0.1.2"
+    const versionRegex = /"version":\s*"([^"]+)"/;
     const packageRegex = /"name": "([^"]+)"/;
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
-	
-        if (line.startsWith('"name":')) { //line name to get package name.
-			//1st group capture of characters in the double quotes which are not double quotes
-            const packageName = line.match(packageRegex)?.[1]; 
+
+        // Only update currentPackage from context lines (space-prefixed in the diff).
+        // Removed (-) or added (+) "name": lines belong to packages being wholly
+        // deleted/added, not version-bumped, so they must not overwrite the tracker.
+        const rawLine = lines[i];
+        const isContextLine = !rawLine.startsWith('-') && !rawLine.startsWith('+');
+
+        if (isContextLine && line.startsWith('"name":')) {
+            const packageName = line.match(packageRegex)?.[1];
             if (packageName) {
                 currentPackage = packageName;
-            }else{
-				continue; //just go to next loop if the package name could not be extracted
-			}
-        } else if (line.startsWith('-') && line.includes('"version":')) { //line starts with - and has the text version
-           const oldVersion = line.match(versionRegex)?.[1];//line should start with "version" and match the numbers in the quotes
-			for (let j = i+1; j < lines.length; j++) {
-                 const newLine = lines[j].trim();
-				if(newLine.startsWith('+') && newLine.includes('"version":')){
-					const newVersion = lines[j].match(versionRegex)?.[1];
-					if (oldVersion && newVersion) {
-						changes.push({ name: currentPackage.trim(), oldVersion:oldVersion.trim(), newVersion: newVersion.trim() });
-					}
-					i = j; //let the next line for package name search start from after the new version name line
-					break;
-				}
-			}
+            } else {
+                continue;
+            }
+        } else if (line.startsWith('-') && line.includes('"version":')) {
+            const oldVersion = line.match(versionRegex)?.[1];
+            for (let j = i + 1; j < lines.length; j++) {
+                const newLine = lines[j].trim();
+                if (newLine.startsWith('+') && newLine.includes('"version":')) {
+                    const newVersion = lines[j].match(versionRegex)?.[1];
+                    if (oldVersion && newVersion) {
+                        changes.push({ name: currentPackage.trim(), oldVersion: oldVersion.trim(), newVersion: newVersion.trim() });
+                    }
+                    i = j;
+                    break;
+                }
+            }
+        }
+    }
+
+    return changes;
+}
+
+/**
+ * Parses a git diff of pubspec.yaml and returns changed package versions.
+ *
+ * Handles the standard single-line format used for pub.dev packages:
+ *   dependencies:
+ *     http: ^0.13.0   →   http: ^1.2.0
+ *
+ * Each removed line (-) with `name: version` is paired with the nearest
+ * following added line (+) for the same package name.
+ */
+export function parsePubspecYamlDiff(diff: string): PackageChange[] {
+    const changes: PackageChange[] = [];
+    const lines = diff.split('\n');
+
+    // Matches a removed dependency line: `-  package_name: <version_constraint>`
+    // The version constraint must start with a digit or ^ so we avoid section
+    // headers like `- dependencies:` (no value) or `- flutter:` (sub-keys only).
+    const removedLineRegex = /^-[ \t]+([\w][\w_-]*):\s+(\S.*)/;
+
+    for (let i = 0; i < lines.length; i++) {
+        const match = lines[i].match(removedLineRegex);
+        if (!match) {
+            continue;
+        }
+
+        const packageName = match[1];
+        const oldVersion = match[2].trim();
+
+        // Skip lines that look like YAML section keys rather than version values
+        // (a bare key with no version digit anywhere, e.g. `- flutter:  `)
+        if (!/\d/.test(oldVersion)) {
+            continue;
+        }
+
+        // Escape special regex characters in the package name before reusing it
+        const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const addedLineRegex = new RegExp(`^\\+[ \\t]+${escapedName}:\\s+(\\S.*)`);
+
+        for (let j = i + 1; j < lines.length; j++) {
+            const newMatch = lines[j].match(addedLineRegex);
+            if (newMatch) {
+                const newVersion = newMatch[1].trim();
+                changes.push({ name: packageName, oldVersion, newVersion });
+                i = j;
+                break;
+            }
+
+            // Stop scanning ahead if we hit another removed line for a different package
+            if (removedLineRegex.test(lines[j])) {
+                break;
+            }
         }
     }
 
@@ -200,26 +294,31 @@ function displayPackageChanges(changes: PackageChange[], display: string = 'mini
         {}
     );
 
-	switch (display) {
-		case 'nice':
-			panel.webview.html = getWebviewContentNice(changes);
-			break;
-		case 'minimal':
-			panel.webview.html = getWebviewContentMinimal(changes);
-			break;
-		default:
-			panel.webview.html = getWebviewContentMinimal(changes);
-			break;
-	}
-    
+    switch (display) {
+        case 'nice':
+            panel.webview.html = getWebviewContentNice(changes);
+            break;
+        case 'minimal':
+        default:
+            panel.webview.html = getWebviewContentMinimal(changes);
+            break;
+    }
 }
 
-function getWebviewContentNice(changes: PackageChange[]): string {
+function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+export function getWebviewContentNice(changes: PackageChange[]): string {
     const tableRows = changes.map(change => `
         <tr>
-            <td>${change.name}</td>
-            <td>${change.oldVersion}</td>
-            <td>${change.newVersion}</td>
+            <td>${escapeHtml(change.name)}</td>
+            <td>${escapeHtml(change.oldVersion)}</td>
+            <td>${escapeHtml(change.newVersion)}</td>
         </tr>
     `).join('');
 
@@ -250,9 +349,9 @@ function getWebviewContentNice(changes: PackageChange[]): string {
     </html>`;
 }
 
-function getWebviewContentMinimal(changes: PackageChange[]): string {
-    const tableRows = changes.map(change => `
-        <p>${change.name} ${change.oldVersion} -> ${change.newVersion}</p>
+export function getWebviewContentMinimal(changes: PackageChange[]): string {
+    const rows = changes.map(change => `
+        <p>${escapeHtml(change.name)} ${escapeHtml(change.oldVersion)} -&gt; ${escapeHtml(change.newVersion)}</p>
     `).join('');
 
     return `<!DOCTYPE html>
@@ -265,12 +364,11 @@ function getWebviewContentMinimal(changes: PackageChange[]): string {
     <body>
         <h1>Package Version Changes</h1>
         <div>
-            ${tableRows}
+            ${rows}
         </div>
     </body>
     </html>`;
 }
-
 
 // This method is called when the extension is deactivated
 export function deactivate() {}

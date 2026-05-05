@@ -29,6 +29,11 @@ Initial release of update-packages-summary. Supports package-lock.json and compo
 - Used a better logic to extract the package names and versions
 - Removed the string 'node_modules' from package name
 
+### 1.2.0
+
+- Added support for pubspec.yaml
+- Better UX which displays last 10 commits for selection.
+
 ---
 
 ## Running the Sample
