@@ -29,15 +29,15 @@ export function activate(context: vscode.ExtensionContext) {
         await doOperation('composer.lock');
     });
 
-    const diffPubspecYaml = vscode.commands.registerCommand('update-packages-summary.diffPubspecYaml', async () => {
-        await doOperation('pubspec.yaml');
+    const diffPubspecLock = vscode.commands.registerCommand('update-packages-summary.diffPubspecLock', async () => {
+        await doOperation('pubspec.lock');
     });
 
-    context.subscriptions.push(diffPackageLock, diffComposerLock, diffPubspecYaml);
+    context.subscriptions.push(diffPackageLock, diffComposerLock, diffPubspecLock);
 }
 
 /**
- * Shows a QuickPick populated with the last 20 commits from git log.
+ * Shows a QuickPick populated with the last 10 commits from git log.
  * A "Enter hash manually..." item at the top lets the user type any hash freely.
  * Returns the selected/typed commit hash, or undefined if the user cancelled.
  */
@@ -135,8 +135,8 @@ async function doOperation(fileType: string) {
             case 'composer.lock':
                 packageChanges = parseComposerLockDiff(stdout);
                 break;
-            case 'pubspec.yaml':
-                packageChanges = parsePubspecYamlDiff(stdout);
+            case 'pubspec.lock':
+                packageChanges = parsePubspecLockDiff(stdout);
                 break;
             default:
                 throw new Error('Cannot parse the lock file type: ' + fileType);
@@ -230,55 +230,61 @@ export function parseComposerLockDiff(diff: string): PackageChange[] {
 }
 
 /**
- * Parses a git diff of pubspec.yaml and returns changed package versions.
+ * Parses a git diff of pubspec.lock and returns changed package versions.
  *
- * Handles the standard single-line format used for pub.dev packages:
- *   dependencies:
- *     http: ^0.13.0   →   http: ^1.2.0
+ * pubspec.lock structure (per package):
+ *   <package-name>:          ← 2-space indent, bare key — this is the name
+ *     dependency: ...
+ *     description:
+ *       name: <package-name>
+ *       sha256: ...
+ *       url: ...
+ *     source: hosted
+ *     version: "1.2.3"       ← 4-space indent — this is the version
  *
- * Each removed line (-) with `name: version` is paired with the nearest
- * following added line (+) for the same package name.
+ * Strategy:
+ *  - Track currentPackage from context lines (space-prefixed) that match the
+ *    2-space-indented bare-key pattern. Only context lines are used so that
+ *    wholly-added or wholly-removed package blocks don't corrupt the tracker.
+ *  - Pair each removed `version:` line with the next added `version:` line.
  */
-export function parsePubspecYamlDiff(diff: string): PackageChange[] {
+export function parsePubspecLockDiff(diff: string): PackageChange[] {
     const changes: PackageChange[] = [];
     const lines = diff.split('\n');
+    let currentPackage = '';
 
-    // Matches a removed dependency line: `-  package_name: <version_constraint>`
-    // The version constraint must start with a digit or ^ so we avoid section
-    // headers like `- dependencies:` (no value) or `- flutter:` (sub-keys only).
-    const removedLineRegex = /^-[ \t]+([\w][\w_-]*):\s+(\S.*)/;
+    // In the raw diff a context line starts with ' ' (space).
+    // A 2-space-indented bare key in the file becomes 3 leading spaces in the diff:
+    // " " (diff marker) + "  " (file indent) + "package-name:"
+    const packageNameRegex = /^ {3}([\w][\w_-]*):\s*$/;
+
+    // Matches the version value inside quotes or unquoted: version: "1.2.3" or version: 1.2.3
+    const versionRegex = /version:\s+"?([^"\s]+)"?/;
 
     for (let i = 0; i < lines.length; i++) {
-        const match = lines[i].match(removedLineRegex);
-        if (!match) {
-            continue;
-        }
+        const rawLine = lines[i];
+        const isContext = !rawLine.startsWith('-') && !rawLine.startsWith('+');
 
-        const packageName = match[1];
-        const oldVersion = match[2].trim();
-
-        // Skip lines that look like YAML section keys rather than version values
-        // (a bare key with no version digit anywhere, e.g. `- flutter:  `)
-        if (!/\d/.test(oldVersion)) {
-            continue;
-        }
-
-        // Escape special regex characters in the package name before reusing it
-        const escapedName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const addedLineRegex = new RegExp(`^\\+[ \\t]+${escapedName}:\\s+(\\S.*)`);
-
-        for (let j = i + 1; j < lines.length; j++) {
-            const newMatch = lines[j].match(addedLineRegex);
-            if (newMatch) {
-                const newVersion = newMatch[1].trim();
-                changes.push({ name: packageName, oldVersion, newVersion });
-                i = j;
-                break;
+        // Only update currentPackage from context lines at the package-name indent level.
+        if (isContext) {
+            const pkgMatch = rawLine.match(packageNameRegex);
+            if (pkgMatch) {
+                currentPackage = pkgMatch[1];
             }
+        }
 
-            // Stop scanning ahead if we hit another removed line for a different package
-            if (removedLineRegex.test(lines[j])) {
-                break;
+        // Detect a removed version line and pair it with the next added version line.
+        if (rawLine.startsWith('-') && rawLine.includes('version:')) {
+            const oldVersion = rawLine.match(versionRegex)?.[1];
+            for (let j = i + 1; j < lines.length; j++) {
+                if (lines[j].startsWith('+') && lines[j].includes('version:')) {
+                    const newVersion = lines[j].match(versionRegex)?.[1];
+                    if (oldVersion && newVersion && currentPackage) {
+                        changes.push({ name: currentPackage, oldVersion, newVersion });
+                    }
+                    i = j;
+                    break;
+                }
             }
         }
     }

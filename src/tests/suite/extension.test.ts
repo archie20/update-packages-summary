@@ -20,7 +20,7 @@ suite('Extension Test Suite', () => {
         const commands = await vscode.commands.getCommands();
         assert.ok(commands.includes('update-packages-summary.diffPackageLock'));
         assert.ok(commands.includes('update-packages-summary.diffComposerLock'));
-        assert.ok(commands.includes('update-packages-summary.diffPubspecYaml'));
+        assert.ok(commands.includes('update-packages-summary.diffPubspecLock'));
     });
 
     // ── parsePackageLockDiff ──────────────────────────────────────────────────
@@ -79,43 +79,77 @@ suite('Extension Test Suite', () => {
         ]);
     });
 
-    // ── parsePubspecYamlDiff ──────────────────────────────────────────────────
+    // ── parsePubspecLockDiff ──────────────────────────────────────────────────
 
-    test('parsePubspecYamlDiff should return correct changes', () => {
-        const diff = `
--  http: ^0.13.0
-+  http: ^1.2.0
-        `;
-        const changes = myExtension.parsePubspecYamlDiff(diff);
+    test('parsePubspecLockDiff should return correct changes', () => {
+        // Raw git diff lines: context lines start with ' ', removed with '-', added with '+'
+        // Package name is at 2-space indent (3 chars including the diff space marker).
+        // Version is at 4-space indent (5 chars including the diff marker).
+        const diff = [
+            '   archive:',
+            '     dependency: transitive',
+            '     source: hosted',
+            '-    version: "4.0.7"',
+            '+    version: "4.0.9"',
+        ].join('\n');
+        const changes = myExtension.parsePubspecLockDiff(diff);
         assert.deepStrictEqual(changes, [
-            { name: 'http', oldVersion: '^0.13.0', newVersion: '^1.2.0' },
+            { name: 'archive', oldVersion: '4.0.7', newVersion: '4.0.9' },
         ]);
     });
 
-    test('parsePubspecYamlDiff should handle multiple package changes', () => {
-        const diff = `
--  http: ^0.13.0
-+  http: ^1.2.0
--  provider: ^6.0.0
-+  provider: ^6.1.0
-        `;
-        const changes = myExtension.parsePubspecYamlDiff(diff);
+    test('parsePubspecLockDiff should handle multiple package changes', () => {
+        const diff = [
+            '   archive:',
+            '     dependency: transitive',
+            '-    version: "4.0.7"',
+            '+    version: "4.0.9"',
+            '   async:',
+            '     dependency: transitive',
+            '-    version: "2.13.0"',
+            '+    version: "2.13.1"',
+        ].join('\n');
+        const changes = myExtension.parsePubspecLockDiff(diff);
         assert.deepStrictEqual(changes, [
-            { name: 'http', oldVersion: '^0.13.0', newVersion: '^1.2.0' },
-            { name: 'provider', oldVersion: '^6.0.0', newVersion: '^6.1.0' },
+            { name: 'archive', oldVersion: '4.0.7', newVersion: '4.0.9' },
+            { name: 'async', oldVersion: '2.13.0', newVersion: '2.13.1' },
         ]);
     });
 
-    test('parsePubspecYamlDiff should skip section headers with no version digit', () => {
-        const diff = `
--dependencies:
-+dependencies:
--  http: ^0.13.0
-+  http: ^1.2.0
-        `;
-        const changes = myExtension.parsePubspecYamlDiff(diff);
+    test('parsePubspecLockDiff should ignore sha256 lines and only capture version', () => {
+        const diff = [
+            '   dbus:',
+            '     dependency: transitive',
+            '     description:',
+            '       name: dbus',
+            '-      sha256: "79e0c234..."',
+            '+      sha256: d0c98dcd...',
+            '       url: "https://pub.dev"',
+            '     source: hosted',
+            '-    version: "0.7.11"',
+            '+    version: "0.7.12"',
+        ].join('\n');
+        const changes = myExtension.parsePubspecLockDiff(diff);
         assert.deepStrictEqual(changes, [
-            { name: 'http', oldVersion: '^0.13.0', newVersion: '^1.2.0' },
+            { name: 'dbus', oldVersion: '0.7.11', newVersion: '0.7.12' },
+        ]);
+    });
+
+    test('parsePubspecLockDiff should not use +/- name lines as currentPackage', () => {
+        // A wholly-removed then wholly-added package produces +/- at the name level.
+        // These must not corrupt the tracker; only context (space-prefixed) name lines count.
+        const diff = [
+            '-  removed_pkg:',
+            '-    version: "1.0.0"',
+            '+  added_pkg:',
+            '+    version: "1.0.0"',
+            '   real_pkg:',
+            '-    version: "2.0.0"',
+            '+    version: "2.1.0"',
+        ].join('\n');
+        const changes = myExtension.parsePubspecLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: 'real_pkg', oldVersion: '2.0.0', newVersion: '2.1.0' },
         ]);
     });
 

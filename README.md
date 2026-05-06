@@ -34,6 +34,10 @@ Initial release of update-packages-summary. Supports package-lock.json and compo
 - Added support for pubspec.yaml
 - Better UX which displays last 10 commits for selection.
 
+### [1.2.1]
+
+- Bugfix: Replaced pubspec.yaml with pubspec.lock
+
 ---
 
 ## Running the Sample

@@ -12,3 +12,7 @@
 
 - Added support for pubspec.yaml
 - Better UX which displays last 10 commits for selection.
+
+## [1.2.1]
+
+- Bugfix: Replaced pubspec.yaml with pubspec.lock
