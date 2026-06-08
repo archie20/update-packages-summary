@@ -30,6 +30,10 @@
       {
         "command": "update-packages-summary.diffPubspecLock",
         "title": "Pubspec.lock diffs (Flutter)"
+      },
+      {
+        "command": "update-packages-summary.diffYarnLock",
+        "title": "Yarn lock diffs"
       }
     ]
   },

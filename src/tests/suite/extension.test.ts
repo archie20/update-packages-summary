@@ -21,6 +21,7 @@ suite('Extension Test Suite', () => {
         assert.ok(commands.includes('update-packages-summary.diffPackageLock'));
         assert.ok(commands.includes('update-packages-summary.diffComposerLock'));
         assert.ok(commands.includes('update-packages-summary.diffPubspecLock'));
+        assert.ok(commands.includes('update-packages-summary.diffYarnLock'));
     });
 
     // ── parsePackageLockDiff ──────────────────────────────────────────────────
@@ -150,6 +151,95 @@ suite('Extension Test Suite', () => {
         const changes = myExtension.parsePubspecLockDiff(diff);
         assert.deepStrictEqual(changes, [
             { name: 'real_pkg', oldVersion: '2.0.0', newVersion: '2.1.0' },
+        ]);
+    });
+
+    // ── parseYarnLockDiff ─────────────────────────────────────────────────────
+
+    test('parseYarnLockDiff should return correct changes for yarn v1', () => {
+        // Context lines start with ' ', removed with '-', added with '+'
+        // Package header has no indent in the file; version has 2-space indent.
+        const diff = [
+            ' react@^18.0.0:',
+            '-  version "18.2.0"',
+            '+  version "18.3.1"',
+            '   resolved "https://registry.yarnpkg.com/react/-/react-18.3.1.tgz"',
+        ].join('\n');
+        const changes = myExtension.parseYarnLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: 'react', oldVersion: '18.2.0', newVersion: '18.3.1' },
+        ]);
+    });
+
+    test('parseYarnLockDiff should handle scoped packages', () => {
+        const diff = [
+            ' "@types/node@^20.0.0":',
+            '-  version "20.0.0"',
+            '+  version "20.19.0"',
+        ].join('\n');
+        const changes = myExtension.parseYarnLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: '@types/node', oldVersion: '20.0.0', newVersion: '20.19.0' },
+        ]);
+    });
+
+    test('parseYarnLockDiff should handle multiple version specs on one header line', () => {
+        const diff = [
+            ' "lodash@^4.0.0, lodash@^4.17.0":',
+            '-  version "4.17.20"',
+            '+  version "4.17.21"',
+        ].join('\n');
+        const changes = myExtension.parseYarnLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: 'lodash', oldVersion: '4.17.20', newVersion: '4.17.21' },
+        ]);
+    });
+
+    test('parseYarnLockDiff should handle multiple package changes', () => {
+        const diff = [
+            ' react@^18.0.0:',
+            '-  version "18.2.0"',
+            '+  version "18.3.1"',
+            ' typescript@^5.0.0:',
+            '-  version "5.4.0"',
+            '+  version "5.9.3"',
+        ].join('\n');
+        const changes = myExtension.parseYarnLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: 'react', oldVersion: '18.2.0', newVersion: '18.3.1' },
+            { name: 'typescript', oldVersion: '5.4.0', newVersion: '5.9.3' },
+        ]);
+    });
+
+    test('parseYarnLockDiff should handle yarn berry (v2) format', () => {
+        // yarn berry uses unquoted `version: x.y.z` and quoted entry keys
+        const diff = [
+            ' "react@npm:^18.0.0":',
+            '-  version: 18.2.0',
+            '+  version: 18.3.1',
+            '   resolution: "react@npm:18.3.1"',
+        ].join('\n');
+        const changes = myExtension.parseYarnLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: 'react', oldVersion: '18.2.0', newVersion: '18.3.1' },
+        ]);
+    });
+
+    test('parseYarnLockDiff should not use +/- header lines as currentPackage', () => {
+        // Wholly-removed and wholly-added packages produce +/- at the header level.
+        // Only context (space-prefixed) header lines should update the tracker.
+        const diff = [
+            '-removed-pkg@^1.0.0:',
+            '-  version "1.0.0"',
+            '+added-pkg@^1.0.0:',
+            '+  version "1.0.0"',
+            ' real-pkg@^2.0.0:',
+            '-  version "2.0.0"',
+            '+  version "2.1.0"',
+        ].join('\n');
+        const changes = myExtension.parseYarnLockDiff(diff);
+        assert.deepStrictEqual(changes, [
+            { name: 'real-pkg', oldVersion: '2.0.0', newVersion: '2.1.0' },
         ]);
     });
 

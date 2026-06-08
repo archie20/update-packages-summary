@@ -33,7 +33,11 @@ export function activate(context: vscode.ExtensionContext) {
         await doOperation('pubspec.lock');
     });
 
-    context.subscriptions.push(diffPackageLock, diffComposerLock, diffPubspecLock);
+    const diffYarnLock = vscode.commands.registerCommand('update-packages-summary.diffYarnLock', async () => {
+        await doOperation('yarn.lock');
+    });
+
+    context.subscriptions.push(diffPackageLock, diffComposerLock, diffPubspecLock, diffYarnLock);
 }
 
 /**
@@ -137,6 +141,9 @@ async function doOperation(fileType: string) {
                 break;
             case 'pubspec.lock':
                 packageChanges = parsePubspecLockDiff(stdout);
+                break;
+            case 'yarn.lock':
+                packageChanges = parseYarnLockDiff(stdout);
                 break;
             default:
                 throw new Error('Cannot parse the lock file type: ' + fileType);
@@ -280,6 +287,81 @@ export function parsePubspecLockDiff(diff: string): PackageChange[] {
                 if (lines[j].startsWith('+') && lines[j].includes('version:')) {
                     const newVersion = lines[j].match(versionRegex)?.[1];
                     if (oldVersion && newVersion && currentPackage) {
+                        changes.push({ name: currentPackage, oldVersion, newVersion });
+                    }
+                    i = j;
+                    break;
+                }
+            }
+        }
+    }
+
+    return changes;
+}
+
+/**
+ * Parses a git diff of yarn.lock and returns changed package versions.
+ *
+ * Supports both yarn classic (v1) and yarn berry (v2) lock file formats.
+ *
+ * yarn.lock v1 structure (per package):
+ *   react@^18.0.0:          ← top-level key, no indent
+ *     version "18.3.1"      ← 2-space indent, quoted value
+ *
+ * yarn.lock v2 (berry) structure:
+ *   "react@npm:^18.0.0":    ← quoted top-level key
+ *     version: 18.3.1       ← 2-space indent, unquoted value
+ *
+ * Strategy:
+ *  - Track currentPackage only from context lines (space-prefixed in the diff)
+ *    that match the top-level, no-indent, contains-'@', ends-with-':' pattern.
+ *    Skipping +/- header lines prevents wholly-added/removed entries from
+ *    corrupting the tracker.
+ *  - Pair each removed `version` line with the next added `version` line.
+ */
+export function parseYarnLockDiff(diff: string): PackageChange[] {
+    const changes: PackageChange[] = [];
+    const lines = diff.split('\n');
+    let currentPackage = '';
+
+    // Matches the package name from a yarn.lock header entry.
+    // Handles scoped packages (@scope/name@...) and regular names (react@...),
+    // as well as quoted entries ("react@npm:...") used by yarn berry.
+    const packageHeaderRegex = /^"?(@[^@]+|[^@"]+)@/;
+
+    for (let i = 0; i < lines.length; i++) {
+        const rawLine = lines[i];
+
+        // Context lines in a diff start with exactly one space.
+        // Package headers in yarn.lock have no file-level indentation, so after
+        // stripping the diff space marker the content must not start with a space.
+        if (rawLine.startsWith(' ')) {
+            const content = rawLine.slice(1);
+            if (!content.startsWith(' ') && content.includes('@') && content.trimEnd().endsWith(':')) {
+                const match = content.match(packageHeaderRegex);
+                if (match) {
+                    currentPackage = match[1];
+                }
+            }
+        }
+
+        // Detect a removed version line and pair it with the next added version line.
+        if (rawLine.startsWith('-') && rawLine.includes('version')) {
+            const content = rawLine.slice(1);
+            // v1: `  version "1.0.0"`   v2: `  version: 1.0.0` or `  version: "1.0.0"`
+            const oldVersion =
+                content.match(/^\s+version "([^"]+)"/)?.[1] ??
+                content.match(/^\s+version:\s+"?([^"\s]+)"?/)?.[1];
+
+            if (!oldVersion) { continue; }
+
+            for (let j = i + 1; j < lines.length; j++) {
+                if (lines[j].startsWith('+') && lines[j].includes('version')) {
+                    const nc = lines[j].slice(1);
+                    const newVersion =
+                        nc.match(/^\s+version "([^"]+)"/)?.[1] ??
+                        nc.match(/^\s+version:\s+"?([^"\s]+)"?/)?.[1];
+                    if (newVersion && currentPackage) {
                         changes.push({ name: currentPackage, oldVersion, newVersion });
                     }
                     i = j;
